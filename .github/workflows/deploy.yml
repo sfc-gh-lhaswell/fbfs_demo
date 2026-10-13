@@ -11,6 +11,12 @@ jobs:
     environment: dev
     steps:
       - uses: actions/checkout@v4
+      - name: Check setup.sql exists
+        run: |
+          if [ ! -f setup.sql ]; then
+            echo "::error::setup.sql is missing. Breaking change, nothing was deployed."
+            exit 1
+          fi
       - run: pip install --quiet snowflake-cli
       - run: |
           echo "$SNOWFLAKE_PRIVATE_KEY" > key.p8
