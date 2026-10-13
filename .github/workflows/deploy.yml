@@ -1,48 +1,71 @@
-# Push a tag like v1.0.0 -> runs setup.sql in DEV, then TEST after approval.
+# Push a tag like v1.0.0 -> deploy to DEV, check consumers still work,
+# then deploy to TEST after approval.
 name: Deploy
 
 on:
   push:
     tags: ['v*']
 
+env:
+  SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+  SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+  SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+
 jobs:
   dev:
     runs-on: ubuntu-latest
     environment: dev
+    env: { ENV: DEV, ROLE: DCM_DEV_DEPLOYER }
     steps:
       - uses: actions/checkout@v4
-      - name: Check setup.sql exists
-        run: |
-          if [ ! -f setup.sql ]; then
-            echo "::error::setup.sql is missing. Breaking change, nothing was deployed."
-            exit 1
-          fi
       - run: pip install --quiet snowflake-cli
-      - run: |
+      - name: Connect to Snowflake
+        run: |
           echo "$SNOWFLAKE_PRIVATE_KEY" > key.p8
-          snow sql -f setup.sql -D ENV=DEV --temporary-connection \
-            --account "$(echo $SNOWFLAKE_ACCOUNT)" --user "$(echo $SNOWFLAKE_USER)" \
-            --authenticator SNOWFLAKE_JWT --private-key-file key.p8 \
-            --role DCM_DEV_DEPLOYER --warehouse FBL_DEMO_WH
-        env:
-          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          echo "SNOW=snow sql -x --account $(echo $SNOWFLAKE_ACCOUNT) --user $(echo $SNOWFLAKE_USER) --authenticator SNOWFLAKE_JWT --private-key-file key.p8 --role $ROLE --warehouse FBL_DEMO_WH" >> $GITHUB_ENV
+
+      - name: Deploy setup.sql
+        run: $SNOW -f setup.sql -D ENV=$ENV -D VERSION=$GITHUB_REF_NAME -D SHA=$GITHUB_SHA
+
+      # Compatibility: run the query a real consumer runs. If a column they
+      # depend on was removed or renamed, this fails and the release stops here.
+      - name: Consumer compatibility check
+        run: $SNOW -q "SELECT POLICY_ID, HOLDER_NAME, PREMIUM_AMT FROM FBL_POLICY_$ENV.APP.POLICY_V1 LIMIT 1"
+
+      # Consumer notification: shows on the run summary page
+      - name: Release notes
+        if: always()
+        run: |
+          echo "### $GITHUB_REF_NAME → $ENV (${{ job.status }})" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: \`$GITHUB_SHA\`" >> $GITHUB_STEP_SUMMARY
+          grep -i "deprecated" setup.sql | sed 's/^/- ⚠️ /' >> $GITHUB_STEP_SUMMARY || true
 
   test:
     needs: dev
     runs-on: ubuntu-latest
     environment: test        # waits for your approval
+    env: { ENV: TEST, ROLE: DCM_TEST_DEPLOYER }
     steps:
       - uses: actions/checkout@v4
       - run: pip install --quiet snowflake-cli
-      - run: |
+      - name: Connect to Snowflake
+        run: |
           echo "$SNOWFLAKE_PRIVATE_KEY" > key.p8
-          snow sql -f setup.sql -D ENV=TEST --temporary-connection \
-            --account "$(echo $SNOWFLAKE_ACCOUNT)" --user "$(echo $SNOWFLAKE_USER)" \
-            --authenticator SNOWFLAKE_JWT --private-key-file key.p8 \
-            --role DCM_TEST_DEPLOYER --warehouse FBL_DEMO_WH
-        env:
-          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          echo "SNOW=snow sql -x --account $(echo $SNOWFLAKE_ACCOUNT) --user $(echo $SNOWFLAKE_USER) --authenticator SNOWFLAKE_JWT --private-key-file key.p8 --role $ROLE --warehouse FBL_DEMO_WH" >> $GITHUB_ENV
+
+      - name: Deploy setup.sql
+        run: $SNOW -f setup.sql -D ENV=$ENV -D VERSION=$GITHUB_REF_NAME -D SHA=$GITHUB_SHA
+
+      # Compatibility: run the query a real consumer runs. If a column they
+      # depend on was removed or renamed, this fails and the release stops here.
+      - name: Consumer compatibility check
+        run: $SNOW -q "SELECT POLICY_ID, HOLDER_NAME, PREMIUM_AMT FROM FBL_POLICY_$ENV.APP.POLICY_V1 LIMIT 1"
+
+      # Consumer notification: shows on the run summary page
+      - name: Release notes
+        if: always()
+        run: |
+          echo "### $GITHUB_REF_NAME → $ENV (${{ job.status }})" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: \`$GITHUB_SHA\`" >> $GITHUB_STEP_SUMMARY
+          grep -i "deprecated" setup.sql | sed 's/^/- ⚠️ /' >> $GITHUB_STEP_SUMMARY || true
+
