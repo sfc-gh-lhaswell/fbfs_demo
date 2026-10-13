@@ -1,0 +1,7 @@
+out/
+.snow/
+*.pyc
+__pycache__/
+.env
+*.p8
+*.pem

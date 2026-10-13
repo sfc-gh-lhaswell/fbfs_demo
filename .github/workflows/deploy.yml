@@ -1,0 +1,60 @@
+# Shared deploy steps, called once per environment by release.yml.
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      target:      { type: string, required: true }
+      role:        { type: string, required: true }
+      environment: { type: string, required: true }
+
+jobs:
+  deploy:
+    name: ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency: dcm-${{ inputs.target }}
+    env:
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+      SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+      TARGET: ${{ inputs.target }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install --quiet snowflake-cli
+
+      - name: Configure Snowflake connection
+        run: |
+          mkdir -p ~/.snowflake
+          echo "$SNOWFLAKE_PRIVATE_KEY" > ~/.snowflake/rsa_key.p8
+          chmod 600 ~/.snowflake/rsa_key.p8
+          cat > ~/.snowflake/config.toml <<EOF
+          [connections.default]
+          account = "$SNOWFLAKE_ACCOUNT"
+          user = "$SNOWFLAKE_USER"
+          authenticator = "SNOWFLAKE_JWT"
+          private_key_file = "~/.snowflake/rsa_key.p8"
+          role = "${{ inputs.role }}"
+          warehouse = "FBL_DEMO_WH"
+          EOF
+          chmod 600 ~/.snowflake/config.toml
+
+      - name: DCM plan
+        run: snow dcm plan --target $TARGET
+
+      # --alias ties this Snowflake deployment to the git tag
+      - name: DCM deploy
+        run: snow dcm deploy --target $TARGET --alias "$TAG"
+
+      - name: Seed data + write release log
+        run: |
+          snow sql -f post_deploy.sql \
+            -D "VERSION=$TAG" -D "ENV=$TARGET" \
+            -D "GIT_SHA=$GITHUB_SHA" -D "DEPLOYED_BY=$GITHUB_ACTOR"
+
+      - name: DCM test (data quality)
+        run: snow dcm test --target $TARGET
