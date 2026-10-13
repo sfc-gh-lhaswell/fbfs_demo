@@ -19,9 +19,16 @@ WHERE NOT EXISTS (SELECT 1 FROM FBL_POLICY_&{ENV}.APP.POLICY);
 
 -- What consumers query. Consumers rely on: POLICY_ID, HOLDER_NAME, PREMIUM_AMT
 CREATE OR REPLACE VIEW FBL_POLICY_&{ENV}.APP.POLICY_V1
-COMMENT = 'Policy data, version 1'
+COMMENT = 'DEPRECATED: use POLICY_V2. POLICY_V1 will be removed on 2027-03-31.'
 AS
 SELECT POLICY_ID, HOLDER_NAME, PREMIUM_AMT, ISSUE_DATE
+FROM FBL_POLICY_&{ENV}.APP.POLICY;
+
+-- New version with the renamed column. V1 above stays unchanged for existing consumers.
+CREATE OR REPLACE VIEW FBL_POLICY_&{ENV}.APP.POLICY_V2
+COMMENT = 'Policy data, version 2'
+AS
+SELECT POLICY_ID, HOLDER_NAME, PREMIUM_AMT AS ANNUAL_PREMIUM, ISSUE_DATE
 FROM FBL_POLICY_&{ENV}.APP.POLICY;
 
 -- Traceability: one row per deployment
