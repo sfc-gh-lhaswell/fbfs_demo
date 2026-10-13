@@ -29,6 +29,9 @@ jobs:
 
       - name: Configure Snowflake connection
         run: |
+          # Strip stray newlines/spaces that sneak in when pasting secrets
+          SNOWFLAKE_ACCOUNT=$(printf %s "$SNOWFLAKE_ACCOUNT" | tr -d '[:space:]')
+          SNOWFLAKE_USER=$(printf %s "$SNOWFLAKE_USER" | tr -d '[:space:]')
           mkdir -p ~/.snowflake
           echo "$SNOWFLAKE_PRIVATE_KEY" > ~/.snowflake/rsa_key.p8
           chmod 600 ~/.snowflake/rsa_key.p8
